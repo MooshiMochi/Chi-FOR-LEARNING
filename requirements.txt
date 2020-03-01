@@ -1,0 +1,14 @@
+discord.py
+git+https://github.com/Devoxin/lavalink.py@dev
+wand
+pillow-simd
+psutil
+bs4
+aiogoogletrans
+requests
+rethinkdb
+pytz
+watchdog
+bounded_pool_executor
+bytepatches
+pytesseract
