@@ -2,12 +2,14 @@ BAND_COUNT = 15
 
 
 class Equalizer:
+    __slots__ = ('_band_count', 'bands', 'freqs')
+
     def __init__(self):
         self._band_count = 15
         self.bands = [0.0 for x in range(self._band_count)]
-        self.freqs = ['25', '40', '63', '100', '160', '250',
+        self.freqs = ('25', '40', '63', '100', '160', '250',
                       '400', '630', '1K', '1.6', '2.5', '4K',
-                      '6.3', '10K', '16K']
+                      '6.3', '10K', '16K')
 
     def set_gain(self, band: int, gain: float):
         if band < 0 or band >= self._band_count:

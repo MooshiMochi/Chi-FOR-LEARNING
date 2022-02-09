@@ -47,6 +47,8 @@ MULTI_TIME_RX = re.compile('(?:([0-9]+)(mo|[smhdwy]))*?', re.IGNORECASE)
 
 
 class TimeFormat:
+    __slots__ = ('absolute', 'relative', 'amount', 'unit', 'full_unit', 'humanized', 'as_date')
+
     def __init__(self, absolute: int, relative: int, amount: int, unit: str, human: str, date: datetime):
         self.absolute = absolute
         self.relative = relative

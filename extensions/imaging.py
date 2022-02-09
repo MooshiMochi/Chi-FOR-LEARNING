@@ -1,16 +1,18 @@
+import re
 from io import BytesIO
-from discord.ext import commands
-
-from PIL import Image, ImageEnhance, ImageColor
-from utils import requests
 
 import discord
-import re
+from discord.ext import commands
+
+from PIL import Image, ImageColor, ImageEnhance
+from utils import requests
 
 url_rx = re.compile("https?:\/\/(www\.)?.+\/\w+.[a-z]{2,6}", re.IGNORECASE)
 
 
 class Imaging(commands.Cog):
+    __slots__ = ('bot',)
+
     def __init__(self, bot):
         self.bot = bot
 

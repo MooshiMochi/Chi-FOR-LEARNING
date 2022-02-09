@@ -1,6 +1,8 @@
 from time import time
 
 class Timer:
+    __slots__ = ('start', 'end')
+
     def __init__(self):
         self.start = None
         self.end = None

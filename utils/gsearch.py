@@ -7,6 +7,8 @@ _google_search = 'https://google.co.uk/search?q='
 
 
 class SearchResult:
+    __slots__ = ('title', 'description', 'url')
+
     def __init__(self, title, description, url):
         self.title = title
         self.description = description

@@ -1,12 +1,13 @@
 import subprocess
-from wand.image import Image
-from wand.color import Color
 from io import BytesIO
-
 from os import listdir
 
+from PIL import Image as PILImage
+from wand.color import Color
+from wand.image import Image
 
-def process_magik(img_bytes, multiplier):
+
+def process_magik(unused, img_bytes, multiplier):
     bio = BytesIO()
 
     with Image(file=img_bytes) as img:
@@ -22,6 +23,7 @@ def process_magik(img_bytes, multiplier):
                            rigidity=0)
         img.resize(width=o_width, height=o_height)
         img.save(file=bio)
+        img.destroy()
 
     bio.seek(0)
     return bio
@@ -45,3 +47,12 @@ def process_radial(img_bytes, blur):
     proc = subprocess.Popen(base_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
     stdout, stderr = proc.communicate(img_bytes)
     return stdout
+
+def check_decompression_bomb(buffer):
+    try:
+        i = PILImage.open(BytesIO(buffer))
+    except (PILImage.DecompressionBombWarning, PILImage.DecompressionBombError):
+        return True
+    else:
+        i.close()
+        return False

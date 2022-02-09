@@ -3,6 +3,8 @@ import threading
 
 
 class ExecutionThreadPool:
+    __slots__ = ('_loop', 'max_threads', 'worker_queue', 'threads')
+
     def __init__(self, max_threads: int):
         self._loop = asyncio.get_event_loop()
         self.max_threads = max_threads

@@ -2,18 +2,21 @@ import asyncio
 import json
 import re
 import textwrap
-from asyncio.subprocess import PIPE, STDOUT
+import traceback
+from asyncio.subprocess import PIPE
+from io import BytesIO
 from secrets import token_urlsafe
 from time import time
 
 import discord
 from discord.ext import commands
-from utils import hastepaste, pagination
-
-module_rx = re.compile('extensions\/(\w+)\.py')  # noqa: W605
+from utils import cache, textutils
+from utils.textutils import AnsiFormat
 
 
 class Admin(commands.Cog):
+    __slots__ = ('bot', 'env')
+
     def __init__(self, bot):
         self.bot = bot
         self.env = {}
@@ -23,24 +26,48 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.is_owner()
+    async def block(self, ctx, user_id: int, blocked: bool):
+        """ Block a user from the bot. """
+        cache.set_blocked(user_id, blocked)
+        await ctx.send("User blocked." if blocked else "User unblocked.")
+
+    @commands.command()
+    @commands.is_owner()
     async def reload(self, ctx, *modules: str):
         """ Reload extensions """
         if not modules:
             return await ctx.send('whatchawantmetoreload.gif')
 
+        loaded_modules = [ext.__name__ for ext in self.bot.extensions.values()]
+
         out = ''
         for module in set(modules):  # dedupe
-            try:
-                self.bot.unload_extension(f'extensions.{module}')
-                self.bot.load_extension(f'extensions.{module}')
-            except Exception as exception:
-                out += f'{module:15}ERR: {str(exception)}\n'
-                import traceback
-                traceback.print_exc()
-            else:
-                out += f'{module:15}OK\n'
+            extension = f'extensions.{module}'
+            out += f'{AnsiFormat.white(module)}\n'
 
-        await ctx.send(f'```\nModule         Status\n----------------------\n{out.strip()}```')
+            if extension in loaded_modules:
+                steps = [('module_unload', self.bot.unload_extension), ('module_load', self.bot.load_extension)]
+            elif extension not in loaded_modules:
+                steps = [('module_load', self.bot.load_extension)]
+
+            for name, step in steps:
+                try:
+                    step(extension)
+                except commands.errors.ExtensionNotFound:
+                    out += f'  {AnsiFormat.red(name)}: {AnsiFormat.white("Extension not found")}\n'
+                except commands.errors.ExtensionError as ext_err:
+                    original = ext_err.original
+                    out += f'  {AnsiFormat.red(name)}: {AnsiFormat.white(original.__class__.__name__ + ": " + str(original))}\n'
+                except Exception as exception:
+                    out += f'  {AnsiFormat.red(name)}: {AnsiFormat.white(str(exception))}\n'
+                    traceback.print_exc()
+                else:
+                    out += f'  {AnsiFormat.green(name)}: {AnsiFormat.white("OK")}\n'
+
+        await ctx.send(f'''```ansi
+{AnsiFormat.blue("====== Module Management Status ======")}
+{out.strip()}```
+        ''')
 
     @commands.command()
     @commands.is_owner()
@@ -55,7 +82,6 @@ class Admin(commands.Cog):
     @commands.is_owner()
     async def bash(self, ctx, *, command: str):
         """ Execute bash commands """
-
         proc = await asyncio.create_subprocess_shell(command, stdin=None, stderr=PIPE, stdout=PIPE)
         out = (await proc.stdout.read()).decode('utf-8')
         err = (await proc.stderr.read()).decode('utf-8')
@@ -64,19 +90,31 @@ class Admin(commands.Cog):
             return await ctx.message.add_reaction('👌')
 
         if out:
-            pages = pagination.paginate(out, 1950)
+            pages = textutils.paginate(out, 1950)
             for page in pages:
                 await ctx.send(f"```bash\n{page}\n```")
 
         if err:
-            pages = pagination.paginate(err, 1950)
+            pages = textutils.paginate(err, 1950)
             for page in pages:
                 await ctx.send(f"```bash\n{page}\n```")
 
     @commands.command()
     @commands.is_owner()
-    async def eval(self, ctx, *, code: str):
+    async def eval(self, ctx, *, code: str = None):
         """ Evaluate Python code """
+        if not code:
+            if not ctx.message.attachments:
+                return await ctx.send('Nothing to evaluate.')
+
+            atch = ctx.message.attachments[0]
+            if not atch.filename.endswith('.txt'):
+                return await ctx.send('File to evaluate must be a text document.')
+
+            buf = BytesIO()
+            await atch.save(buf, seek_begin=True, use_cached=False)
+            code = buf.read().decode()
+            
         if code == 'exit()':
             self.env.clear()
             return await ctx.send('Environment cleared')
@@ -136,7 +174,7 @@ async def func():
         try:
             await ctx.send(f'```py\n{self.sanitize(message)}```')
         except discord.HTTPException:
-            paste = await hastepaste.create(message)
+            paste = await textutils.dump(message)
             await ctx.send(f'Eval result: <{paste}>')
 
     @commands.command()

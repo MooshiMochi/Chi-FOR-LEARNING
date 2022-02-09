@@ -6,7 +6,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 
 _http = aiohttp.ClientSession()
-_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.86 Safari/537.36'
+_user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.81 Safari/537.36'
 _vqd_re = re.compile('vqd=([0-9-]+)\&')
 _weather_re = re.compile('{.+}')
 
@@ -18,6 +18,8 @@ class SafeSearch:
 
 
 class SearchResult:
+    __slots__ = ('title', 'description', 'url')
+
     def __init__(self, title, description, url):
         self.title = title
         self.description = description
@@ -36,7 +38,7 @@ async def search(query: str, locale='uk-en', safe=SafeSearch.OFF, timeout=30, pr
     if not query:
         raise ValueError('query must be defined')
 
-    async with _http.get(f'https://duckduckgo.com/html/?q={quote(query)}&kl={locale}&ex={safe}',
+    async with _http.get(f'https://duckduckgo.com/html/?q={quote(query)}&kl={locale}&ex={safe[0]}',
                          timeout=timeout,
                          proxy=proxy,
                          headers={'User-Agent': _user_agent}) as page:

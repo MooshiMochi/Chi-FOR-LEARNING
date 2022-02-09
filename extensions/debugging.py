@@ -1,13 +1,12 @@
-import asyncio
-import discord
 import importlib
 import inspect
 import sys
-from discord.ext import commands
 from time import time
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
+
+from discord.ext import commands
+from utils import textutils
+from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
-from utils import hastepaste
 
 
 class Debugging(commands.Cog):
@@ -35,15 +34,12 @@ class Debugging(commands.Cog):
             self.observer.join()
             self.observer = None
 
-    @commands.command()
+    @commands.command(aliases=['wd'])
     @commands.is_owner()
     async def watchdog(self, ctx):
         self.toggle_watchdog(ctx)
-
-        if self.watchdog:
-            await ctx.send('Watchdog enabled.')
-        else:
-            await ctx.send('Watchdog disabled.')
+        opt = 'enabled' if self.watchdog else 'disabled'
+        await ctx.send(f'Watchdog {opt}.')
 
     @commands.command()
     @commands.is_owner()
@@ -57,10 +53,10 @@ class Debugging(commands.Cog):
         source = inspect.getsource(cmd.callback)
 
         if len(source) > 1990:
-            paste = await hastepaste.create(source)
+            paste = await textutils.dump(source)
             await ctx.send(f'Source too big, uploaded to HastePaste: <{paste}>')
         else:
-            await ctx.send(f'```\n{source}```')
+            await ctx.send(f'```py\n{source.replace("`", "′")}```')
 
 
 class Handler(FileSystemEventHandler):
@@ -109,15 +105,21 @@ class Handler(FileSystemEventHandler):
             if not ext or not ext == 'py':
                 return
 
-            reloadable = '.'.join(full_path[1:]).strip('.py')
+            reloadable = '.'.join(full_path[1:])[:-3]
 
             m = await self.ctx.send(f'`[Watchdog]` <a:processing:620018387380207662> :: Auto-reloading `{reloadable}`')
 
             try:
                 if 'extensions' in reloadable:
-                    self.bot.reload_extension(reloadable)
-                elif 'utils' in reloadable and reloadable in sys.modules:
-                    importlib.reload(sys.modules[reloadable])
+                    try:
+                        self.bot.reload_extension(reloadable)
+                    except commands.ExtensionNotLoaded:
+                        self.bot.load_extension(reloadable)
+                elif 'utils' in reloadable or 'sources' in reloadable:
+                    if reloadable in sys.modules:
+                        importlib.reload(sys.modules[reloadable])
+                    else:
+                        __import__(reloadable)
                 else:
                     return await m.edit(content=f'`[Watchdog]` Unknown extension {event.src_path}')
             except Exception as ex:

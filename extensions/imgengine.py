@@ -1,28 +1,52 @@
-import discord
-from discord.ext import commands
 import re
 from concurrent.futures import ThreadPoolExecutor
-import requests
 from io import BytesIO
-from PIL import Image, ImageEnhance, ImageDraw, ImageFont
+
+import discord
+import requests
+from discord.ext import commands
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageSequence
 
 executor_pool = ThreadPoolExecutor(max_workers=10)
 MAX_IMAGE_SIZE = 5 * 1000 * 1000
-MAX_FILE_LIMIT = 10
+MAX_FILE_LIMIT = 15
 MAX_LOOP_ITER = 10
 
 PROC_M = {}  # user m id -> bot response id
 
 
 class GifMaker:
+    __slots__ = ('_seek', '_frames', '_durations')
+
     def __init__(self):
+        self._seek = 0
         self._frames = []
         self._durations = []
 
+    @classmethod
+    def from_image(cls, image):
+        gm = cls()
+        for frame in ImageSequence.Iterator(image):
+            b = BytesIO()
+            frame.save(b, 'png')
+            b.seek(0)
+            gm.add_frame(Image.open(b), frame.info.get('duration', 1))
+
+        return gm
+
     @property
     def frames(self):
-        for i in range(len(self._frames)):
-            yield self._frames[i], self._durations[i]
+        for i in range(len(self._frames) - self._seek):
+            yield self._frames[i + self._seek], self._durations[i + self._seek]
+
+    def copy(self):
+        maker = GifMaker()
+
+        for frame, duration in self.frames:
+            maker.add_frame(frame.copy(), duration)
+
+        return maker
 
     def add_frame(self, frame, duration):
         self._frames.append(frame)
@@ -30,19 +54,21 @@ class GifMaker:
 
     def export(self):
         gif_bytes = BytesIO()
-        self._frames[0].save(gif_bytes,
-                            save_all=True,
-                            append_images=self._frames[1:],
-                            format='gif',
-                            loop=0,
-                            duration=self._durations,
-                            disposal=2,
-                            optimize=True)
+        self._frames[0].save(gif_bytes, save_all=True, append_images=self._frames[1:], format='gif',
+                             loop=0, duration=self._durations, disposal=2, optimize=True)
         gif_bytes.seek(0)
         return gif_bytes
 
+    def export_selected_frame(self):
+        frame_bytes = BytesIO()
+        self._frames[self._seek].save(frame_bytes, 'png')
+        frame_bytes.seek(0)
+        return frame_bytes
+
 
 class Text:
+    __slots__ = ('size', 'font', 'colour')
+
     def __init__(self, size, font):
         self.size = size
         self.font = font or 'assets/generators/facts/verdana.ttf'
@@ -57,6 +83,8 @@ class Text:
 
 
 class ImgEngine(commands.Cog):
+    __slots__ = ('bot',)
+
     def __init__(self, bot):
         self.bot = bot
 
@@ -74,6 +102,7 @@ You may edit your message to change the resulting image without spamming the cha
 
     :: <func>:
         load(url)               :: Loads an image from the given URL
+        load_gif(url)           :: Loads a GIF from the given URL
         copy(var)               :: Copies an image from an existing var
         new_gif()               :: Creates a GIF Image instance used for creating gifs. Use `.add_frame(var,duration)` to add frames
         canvas(width,height)    :: Creates a blank (transparent) canvas with the specified width and height
@@ -82,12 +111,14 @@ You may edit your message to change the resulting image without spamming the cha
 :: General Operations:
     loop(times, statement)      :: Runs the provided statement the given amount of times.
                                    Statement should be written normally like any other line.
-                                   You may use `;` to execute multiple statements that would otherwise be written across multiple lines.```''')
+                                   You may use `;` to execute multiple statements that would otherwise be written across multiple lines.
+    render(fmt || png)          :: Renders the image with the given format, or png by default.
+    preview(index)              :: Renders a single frame from a GIF image.```''')
 
         await ctx.send('''```
 :: Text operations:
-    size(pt)                     :: The new font size.
-    print(img, text, x, y)       :: Writes the text onto the specified image at the given co-ordinates.
+    size(pt)                    :: The new font size.
+    print(img, text, x, y)      :: Writes the text onto the specified image at the given co-ordinates.
 
 :: Image operations:
     colour(r, g, b)             :: Sets the colour of the image or text, depending what the function is called on.
@@ -99,14 +130,17 @@ You may edit your message to change the resulting image without spamming the cha
     scale(width, height)        :: Scales the image to the given width and height
     hflip()                     :: Horizontally flips the image
     vflip()                     :: Vertically flips the image
-    render(fmt || png)          :: Renders the image with the given format, or png by default.
     filter(r, g, b, s)          :: Filters out the specified colour. `s` is scope, (0-255), where colors in the range
-                                    of scope are filtered out (i.e. 10,10,10,20 means -10,-10,-10 to 30,30,30 are filtered)
-    match_scale(img)            :: Resizes the image to match another's dimensions
+                                   of scope are filtered out (i.e. 10,10,10,20 means -10,-10,-10 to 30,30,30 are filtered)
+    match_scale(img)            :: Resizes the image to match another's dimensions```''')
+        await ctx.send('''```
     add_frame(img, duration)    :: Adds an image to a `GifMaker` with the given duration.
     rev_frames()                :: Reverses frames of a GIF image. This operation converts the specified image into a 
-                                    `GifMaker` instance.
-    add_all(target_gif)         :: Adds the frames of the target GIF to the source GIF.```''')
+                                   `GifMaker` instance.
+    map_frames(statement)       :: Iterates over every frame in the target `GifMaker` instance, applying the statement to each frame.
+                                   Each frame is accessible within the statement via the `frame` variable.
+    add_all(target_gif)         :: Adds the frames of the target GIF to the source GIF.
+    seek_to(index)              :: Seeks the given GIF instance to the provided index. Useful for manipulating GIFs after a given frame.```''')
 
     @commands.command()
     async def process(self, ctx, *, code: str):
@@ -125,6 +159,8 @@ You may edit your message to change the resulting image without spamming the cha
                 pass
             else:
                 await old_message.delete()
+
+        setattr(ctx, 'LIMIT_BYPASS', ctx.author.id in (180093157554388993,))
 
         if code.startswith('```py'):
             code = code[5:]
@@ -195,13 +231,20 @@ You may edit your message to change the resulting image without spamming the cha
             func, param = (match.group(1), match.group(2))
 
             if func == 'load':
-                if len(env) > MAX_FILE_LIMIT - 1:
+                if len(env) > MAX_FILE_LIMIT - 1 and not ctx.LIMIT_BYPASS:
                     return self.get_stack(ctx, line, f'Unable to copy image; you have hit the `{MAX_FILE_LIMIT}` active images cap!')
 
-                env[var_name] = self.get_image(param.strip('<>'))
+                env[var_name] = self.get_image(param.strip('<>'), ctx.LIMIT_BYPASS)
                 return 1  # TODO: Check if words follow assignment?
+            elif func == 'load_gif':
+                if len(env) > MAX_FILE_LIMIT - 1 and not ctx.LIMIT_BYPASS:
+                    return self.get_stack(ctx, line, f'Unable to copy image; you have hit the `{MAX_FILE_LIMIT}` active images cap!')
+
+                img = self.get_image(param.strip('<>'), ctx.LIMIT_BYPASS)
+                env[var_name] = GifMaker.from_image(img)
+                return 1
             elif func == 'copy':
-                if len(env) > MAX_FILE_LIMIT - 1:
+                if len(env) > MAX_FILE_LIMIT - 1 and not ctx.LIMIT_BYPASS:
                     return self.get_stack(ctx, line, f'Unable to copy image; you have hit the `{MAX_FILE_LIMIT}` active images cap!')
 
                 if param not in env:
@@ -219,6 +262,9 @@ You may edit your message to change the resulting image without spamming the cha
                     return self.get_stack(ctx, line, 'canvas operation requires 2 params: width, height')
 
                 w, h = (int(params[0]), int(params[1]))
+
+                if w < 1 or h < 1:
+                    return self.get_stack(ctx, line, 'width/height parameters must be 1 or bigger!')
 
                 if w > 4000 or h > 4000:
                     return self.get_stack(ctx, line, 'width/height parameters may not exceed 4000!')
@@ -299,7 +345,7 @@ You may edit your message to change the resulting image without spamming the cha
                 params = self.get_params(param)
 
                 if len(params) < 3:
-                    return self.get_stack(ctx, line, f'apply operation requires 3 params: img, x, y')
+                    return self.get_stack(ctx, line, 'apply operation requires 3 params: img, x, y')
 
                 dest, x, y = params
 
@@ -311,24 +357,24 @@ You may edit your message to change the resulting image without spamming the cha
                 params = self.get_params(param)
 
                 if len(params) < 2:
-                    return self.get_stack(ctx, line, f'scale operation requires 2 params: width, height')
+                    return self.get_stack(ctx, line, 'scale operation requires 2 params: width, height')
 
                 width, height = params
 
-                if int(width) > 2048 or int(height) > 2048:
-                    return self.get_stack(ctx, line, f'width/height parameters may not exceed 2048!')
+                if int(width) > 4096 or int(height) > 4096:
+                    return self.get_stack(ctx, line, 'width/height parameters may not exceed 4096!')
 
                 env[var] = env[var].resize((int(width), int(height)), resample=Image.BICUBIC)
             elif op == 'extend':
                 params = self.get_params(param)
 
                 if len(params) < 3:
-                    return self.get_stack(ctx, line, f'extend operation requires 3 params: width, height, fill')
+                    return self.get_stack(ctx, line, 'extend operation requires 3 params: width, height, fill')
 
                 width, height, fill = params
 
                 if int(width) > 2048 or int(height) > 2048:
-                    return self.get_stack(ctx, line, f'width/height parameters may not exceed 2048!')
+                    return self.get_stack(ctx, line, 'width/height parameters may not exceed 2048!')
 
                 img = env[var]
                 base = Image.new(img.mode, (img.width + int(width), img.height + int(height)), fill)
@@ -352,11 +398,24 @@ You may edit your message to change the resulting image without spamming the cha
                     return self.get_stack(ctx, line, f'{dest} referenced before assignment!')
 
                 env[var] = env[var].resize(env[dest].size)
+            elif op == 'seek_to':
+                if not isinstance(env[var], GifMaker):
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
+
+                frame_num = int(param)
+                frame_count = len(env[var]._frames)
+                if frame_num < 0:
+                    return self.get_stack(ctx, line, 'Cannot seek before 0!')
+
+                if frame_count < frame_num:
+                    return self.get_stack(ctx, line, f'Seek index exceeds frame count! ({frame_num} > {frame_count})')
+
+                env[var]._seek = frame_num
             elif op == 'filter':
                 params = self.get_params(param)
 
                 if len(params) < 3:
-                    return self.get_stack(ctx, line, f'filter operation requires 3-4 params: r,g,b(,s)')
+                    return self.get_stack(ctx, line, 'filter operation requires 3-4 params: r,g,b(,s)')
 
                 if len(params) == 3:
                     r, g, b, s = (int(c) for c in params), 0
@@ -383,67 +442,80 @@ You may edit your message to change the resulting image without spamming the cha
                 env[var].putdata(new_pixels)
             elif op == 'add_frame':
                 if not isinstance(env[var], GifMaker):
-                    return self.get_stack(ctx, line, f'The referenced var is not of type `Gif`!')
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
 
                 params = self.get_params(param)
 
                 if len(params) < 2:
-                    return self.get_stack(ctx, line, f'add_frame operation requires 2 params: img, duration')
+                    return self.get_stack(ctx, line, 'add_frame operation requires 2 params: img, duration')
 
                 img, duration = params
                 env[var].add_frame(env[img], float(duration))
             elif op == 'rev_frames':
-                gif = GifMaker()
-                im = env[var]
+                gif = env[var]
+                gif._frames = gif._frames[::-1]
+                gif._durations = gif._durations[::-1] 
+            elif op == 'map_frames':
+                if not isinstance(env[var], GifMaker):
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
 
-                for frame in reversed(range(0, im.n_frames)):
-                    im.seek(frame)
-                    frame_buf = BytesIO()
-                    im.save(frame_buf, 'png')
-                    frame_buf.seek(0)
+                statements = param.split(';')
 
-                    gif.add_frame(Image.open(frame_buf), im.info.get('duration', 1))
+                for frame, duration in env[var].frames:
+                    env['frame'] = frame
+                    for stmt in statements:
+                        if not stmt:
+                            continue
 
-                env[var] = gif
+                        swords = self.get_words(stmt)
+                        for si, sword in enumerate(swords):
+                            res = self._evaluate(ctx, env, stmt, swords, sword, si)
+
+                            if res == 0:
+                                return 0
+
+                            if res == 1:
+                                break
+
+                            if res == 2:
+                                continue
+
+                del env['frame']
             elif op == 'add_all':
                 if not isinstance(env[var], GifMaker):
-                    return self.get_stack(ctx, line, f'The referenced var is not of type `Gif`!')
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
 
                 if param not in env:
-                    return self.get_stack(ctx, line, f'{dest} referenced before assignment!')
+                    return self.get_stack(ctx, line, f'{param} referenced before assignment!')
 
                 target_gif = env[param]
 
                 if not isinstance(target_gif, GifMaker):
-                    return self.get_stack(ctx, line, f'The referenced var is not of type `Gif`!')
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
 
                 for frame, duration in target_gif.frames:
                     env[var].add_frame(frame, duration)
             elif op == 'colour':
                 if not isinstance(env[var], Text) and not isinstance(env[var], Image.Image):
-                    return self.get_stack(ctx, line, f'The referenced var is not of type `Text` or `Image`!')
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Text` or `Image`!')
 
                 params = self.get_params(param)
 
-                if len(params) < 3:
+                if len(params) < 3 or len(params) > 3:
                     return self.get_stack(ctx, line, f'Expected 3 parameters, got {len(params)}')
 
-                r, g, b = params
+                def try_int(i):
+                    try:
+                        return int(i)
+                    except ValueError:
+                        return None
 
-                try:
-                    r = int(r)
-                except ValueError:
-                    return self.get_stack(ctx, line, f'r must be an integer')
+                r, g, b = list(map(try_int, params))
+                invalid = next((i for i, c in enumerate((r, g, b)) if c is None), None)
 
-                try:
-                    g = int(g)
-                except ValueError:
-                    return self.get_stack(ctx, line, f'g must be an integer')
-
-                try:
-                    b = int(b)
-                except ValueError:
-                    return self.get_stack(ctx, line, f'b must be an integer')
+                if invalid is not None:
+                    channel = ('r', 'g', 'b')[invalid]
+                    return self.get_stack(ctx, line, f'{channel} must be an integer')
 
                 if isinstance(env[var], Text):
                     env[var].colour = (r, g, b)
@@ -505,14 +577,22 @@ You may edit your message to change the resulting image without spamming the cha
                     rendered.seek(0)
 
                 return discord.File(rendered, filename=f'render.{fmt}')
+            elif op == 'preview':
+                if not isinstance(env[var], GifMaker):
+                    return self.get_stack(ctx, line, 'The referenced var is not of type `Gif`!')
+
+                seek = int(param)
+                env[var]._seek = seek
+                frame = env[var].export_selected_frame()
+                return discord.File(frame, filename=f'preview.png')
             else:
                 return self.get_stack(ctx, line, f'Unknown func {op}')
 
-    def get_image(self, url):
+    def get_image(self, url, bypass):
         res = requests.get(url, stream=True)
         content_size = int(res.headers.get('content-length', 0))
 
-        if content_size > MAX_IMAGE_SIZE:
+        if content_size > MAX_IMAGE_SIZE and not bypass:
             raise OverflowError(f'Image exceeds max size ({content_size} > {MAX_IMAGE_SIZE})')
 
         return Image.open(BytesIO(res.content))
