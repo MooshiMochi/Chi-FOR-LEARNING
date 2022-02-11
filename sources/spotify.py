@@ -24,7 +24,7 @@ class SpotifyAudioTrack(DeferredAudioTrack):
         }, requester=0)
 
     async def load(self, client):
-        result = await client.get_tracks(f'ytmsearch:{self.title} {self.author}')
+        result = await client.get_tracks(f'ytmsearch:{self.title} {self.author} audio')
 
         if result.load_type != LoadType.SEARCH or not result.tracks:
             raise LoadError(result.load_type.value)
@@ -80,7 +80,7 @@ class SpotifySource(Source):
         return SpotifyAudioTrack.from_dict(res)
 
     async def load_recommended(self, track_ids):
-        res = await self._req_endpoint('recommendations', query={'seed_tracks': ','.join(track_ids), 'limit': 1})
+        res = await self._req_endpoint('recommendations', query={'seed_tracks': ','.join(track_ids), 'market': 'GB', 'limit': 1})
         return list(map(SpotifyAudioTrack.from_dict, res['tracks']))[0]
 
     async def load_item(self, client, query):
@@ -91,8 +91,7 @@ class SpotifySource(Source):
                 return LoadResult(LoadType.SEARCH, spotify_tracks)
 
         if (matcher := TRACK_URI_REGEX.match(query)):
-            track_id = matcher.group(2)
-            spotify_track = await self._load_track(track_id)
+            spotify_track = await self._load_track(track_id=matcher.group(2))
 
             if spotify_track:
                 return LoadResult(LoadType.TRACK, [spotify_track])
