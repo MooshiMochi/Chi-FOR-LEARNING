@@ -11,6 +11,18 @@ class LoadError(Exception):
 
 
 class SpotifyAudioTrack(DeferredAudioTrack):
+    @classmethod
+    def from_dict(cls, metadata):
+        return cls({
+            'identifier': metadata['id'],
+            'title': metadata['name'],
+            'author': metadata['artists'][0]['name'],
+            'length': metadata['duration_ms'],
+            'uri': f'https://open.spotify.com/track/{metadata["id"]}',
+            'isSeekable': True,
+            'isStream': False
+        }, requester=0)
+
     async def load(self, client):
         result = await client.get_tracks(f'ytmsearch:{self.title} {self.author}')
 
@@ -61,64 +73,15 @@ class SpotifySource(Source):
 
     async def _load_search(self, query: str):
         res = await self._req_endpoint('search', query={'q': query, 'type': 'track', 'limit': 10})
-        tracks = []
-
-        for track in res['tracks']['items']:
-            title = track['name']
-            artist = track['artists'][0]['name']
-            duration = track['duration_ms']
-            identifier = track['id']
-            sat = SpotifyAudioTrack({
-                'identifier': identifier,
-                'title': title,
-                'author': artist,
-                'length': duration,
-                'uri': f'https://open.spotify.com/track/{identifier}',
-                'isSeekable': True,
-                'isStream': False
-            }, requester=0)
-            tracks.append(sat)
-
-        return tracks
+        return list(map(SpotifyAudioTrack.from_dict, res['tracks']['items']))
 
     async def _load_track(self, track_id: str):
         res = await self._req_endpoint(f'tracks/{track_id}')
-
-        track_title = res['name']
-        track_artist = res['artists'][0]['name'] if res['artists'] else 'Unknown Artist'
-        track_duration = res['duration_ms']
-
-        return SpotifyAudioTrack({
-            'identifier': track_id,
-            'title': track_title,
-            'author': track_artist,
-            'length': track_duration,
-            'uri': f'https://open.spotify.com/track/{track_id}',
-            'isSeekable': True,
-            'isStream': False
-        }, requester=0)
+        return SpotifyAudioTrack.from_dict(res)
 
     async def load_recommended(self, track_ids):
         res = await self._req_endpoint(f'recommendations', query={'seed_tracks': ','.join(track_ids), 'limit': 1})
-        tracks = []
-
-        for track in res['tracks']:
-            title = track['name']
-            artist = track['artists'][0]['name']
-            duration = track['duration_ms']
-            identifier = track['id']
-            sat = SpotifyAudioTrack({
-                'identifier': identifier,
-                'title': title,
-                'author': artist,
-                'length': duration,
-                'uri': f'https://open.spotify.com/track/{identifier}',
-                'isSeekable': True,
-                'isStream': False
-            }, requester=0)
-            tracks.append(sat)
-
-        return tracks[0]
+        return list(map(SpotifyAudioTrack.from_dict, res['tracks']))[0]
 
     async def load_item(self, client, query):
         if query.startswith('spsearch:'):
