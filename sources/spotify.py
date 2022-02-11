@@ -80,7 +80,7 @@ class SpotifySource(Source):
         return SpotifyAudioTrack.from_dict(res)
 
     async def load_recommended(self, track_ids):
-        res = await self._req_endpoint(f'recommendations', query={'seed_tracks': ','.join(track_ids), 'limit': 1})
+        res = await self._req_endpoint('recommendations', query={'seed_tracks': ','.join(track_ids), 'limit': 1})
         return list(map(SpotifyAudioTrack.from_dict, res['tracks']))[0]
 
     async def load_item(self, client, query):
@@ -88,17 +88,13 @@ class SpotifySource(Source):
             spotify_tracks = await self._load_search(query[9:])
 
             if not spotify_tracks:
-                return None
-
-            return LoadResult(LoadType.SEARCH, spotify_tracks)
+                return LoadResult(LoadType.SEARCH, spotify_tracks)
 
         if (matcher := TRACK_URI_REGEX.match(query)):
             track_id = matcher.group(2)
             spotify_track = await self._load_track(track_id)
 
-            if not spotify_track:
-                return None
-
-            return LoadResult(LoadType.TRACK, [spotify_track])
+            if spotify_track:
+                return LoadResult(LoadType.TRACK, [spotify_track])
 
         return None
