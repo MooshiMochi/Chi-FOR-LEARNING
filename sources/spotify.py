@@ -87,7 +87,7 @@ class SpotifySource(Source):
         if query.startswith('spsearch:'):
             spotify_tracks = await self._load_search(query[9:])
 
-            if not spotify_tracks:
+            if spotify_tracks:
                 return LoadResult(LoadType.SEARCH, spotify_tracks)
 
         if (matcher := TRACK_URI_REGEX.match(query)):
