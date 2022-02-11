@@ -40,6 +40,9 @@ class SpotifySource(Source):
         self._token = res['access_token']
 
     async def _req_endpoint(self, url, query=None, is_retry: bool = False):
+        if not self._token:
+            await self._refresh_oauth()
+
         base_req = requests.get(f'https://api.spotify.com/v1/{url}',
                                 params=query,
                                 headers={'Authorization': f'Bearer {self._token}'})
@@ -57,9 +60,6 @@ class SpotifySource(Source):
         return res
 
     async def _load_search(self, query: str):
-        if not self._token:
-            await self._refresh_oauth()
-
         res = await self._req_endpoint('search', query={'q': query, 'type': 'track', 'limit': 10})
         tracks = []
 
@@ -82,9 +82,6 @@ class SpotifySource(Source):
         return tracks
 
     async def _load_track(self, track_id: str):
-        if not self._token:
-            await self._refresh_oauth()
-
         res = await self._req_endpoint(f'tracks/{track_id}')
 
         track_title = res['name']
@@ -102,9 +99,6 @@ class SpotifySource(Source):
         }, requester=0)
 
     async def load_recommended(self, track_ids):
-        if not self._token:
-            await self._refresh_oauth()
-
         res = await self._req_endpoint(f'recommendations', query={'seed_tracks': ','.join(track_ids), 'limit': 1})
         tracks = []
 
