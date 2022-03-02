@@ -3,7 +3,9 @@ from base64 import b64encode
 from lavalink.models import DeferredAudioTrack, LoadResult, LoadType, PlaylistInfo, Source
 from utils import requests
 
+ARTIST_URI_REGEX = re.compile(r'^(?:https?://(?:open\.)?spotify\.com|spotify)([/:])artist\1([a-zA-Z0-9]+)')
 TRACK_URI_REGEX = re.compile(r'^(?:https?://(?:open\.)?spotify\.com|spotify)([/:])track\1([a-zA-Z0-9]+)')
+PLAYLIST_URI_REGEX = re.compile(r'^(?:https?://(?:open\.)?spotify\.com(?:/user/[a-zA-Z0-9_]+)?|spotify)([/:])playlist\1([a-zA-Z0-9]+)')
 
 
 class LoadError(Exception):
@@ -23,8 +25,12 @@ class SpotifyAudioTrack(DeferredAudioTrack):
             'isStream': False
         }, requester=0)
 
+    @classmethod
+    def from_items(cls, items):
+        return list(map(cls.from_dict, items))
+
     async def load(self, client):
-        result = await client.get_tracks(f'ytmsearch:{self.title} {self.author} audio')
+        result = await client.get_tracks(f'ytmsearch:{self.title} {self.author}')
 
         if result.load_type != LoadType.SEARCH or not result.tracks:
             raise LoadError(result.load_type.value)
@@ -73,11 +79,23 @@ class SpotifySource(Source):
 
     async def _load_search(self, query: str):
         res = await self._req_endpoint('search', query={'q': query, 'type': 'track', 'limit': 10})
-        return list(map(SpotifyAudioTrack.from_dict, res['tracks']['items']))
+        return LoadResult(LoadType.SEARCH, SpotifyAudioTrack.from_items(res['tracks']['items']))
+
+    async def _load_artist(self, artist_id: str):
+        artist = await self._req_endpoint(f'artists/{artist_id}')
+        top_tracks = await self._req_endpoint(f'artists/{artist_id}/top-tracks', query={'market': 'GB'})
+        return LoadResult(LoadType.PLAYLIST, SpotifyAudioTrack.from_items(top_tracks['tracks']), PlaylistInfo(f'{artist["name"]}\'s Top Tracks'))
 
     async def _load_track(self, track_id: str):
         res = await self._req_endpoint(f'tracks/{track_id}')
-        return SpotifyAudioTrack.from_dict(res)
+        return LoadResult(LoadType.TRACK, [SpotifyAudioTrack.from_dict(res)])
+
+    async def _load_playlist(self, playlist_id: str, offset: int = 0):
+        playlist = await self._req_endpoint(f'playlists/{playlist_id}')
+        tracks = await self._req_endpoint(f'playlists/{playlist_id}/tracks?offset={offset}')
+        return LoadResult(LoadType.PLAYLIST,
+                          SpotifyAudioTrack.from_items(map(lambda item: item['track'], tracks['items'])),
+                          PlaylistInfo(playlist['name']))
 
     async def load_recommended(self, track_ids):
         res = await self._req_endpoint('recommendations', query={'seed_tracks': ','.join(track_ids), 'market': 'GB', 'limit': 1})
@@ -85,15 +103,15 @@ class SpotifySource(Source):
 
     async def load_item(self, client, query):
         if query.startswith('spsearch:'):
-            spotify_tracks = await self._load_search(query[9:])
-
-            if spotify_tracks:
-                return LoadResult(LoadType.SEARCH, spotify_tracks)
+            return await self._load_search(query[9:])
 
         if (matcher := TRACK_URI_REGEX.match(query)):
-            spotify_track = await self._load_track(track_id=matcher.group(2))
+            return await self._load_track(track_id=matcher.group(2))
 
-            if spotify_track:
-                return LoadResult(LoadType.TRACK, [spotify_track])
+        if (matcher := PLAYLIST_URI_REGEX.match(query)):
+            return await self._load_playlist(playlist_id=matcher.group(2))
+
+        if (matcher := ARTIST_URI_REGEX.match(query)):
+            return await self._load_artist(artist_id=matcher.group(2))
 
         return None
